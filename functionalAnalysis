@@ -1,0 +1,67 @@
+# If you want to analyze the abundance of KEGG pathways instead of KO within the pathway, please set `ko_to_kegg` to TRUE.
+# KEGG pathways typically have more descriptive explanations.
+
+library(readr)
+library(ggpicrust2)
+library(tibble)
+library(tidyverse)
+library(ggprism)
+library(patchwork)
+
+metadata <- read_delim("sample-metadata_4r.txt", delim = "\t", escape_double = FALSE, trim_ws = TRUE) 
+
+# Load KEGG pathway abundance
+# data(kegg_abundance)
+kegg_abundance <- ko2kegg_abundance("q2-picrust2_output/ko_metagenome_exported/ko-feature-table.biom_copy.tsv") 
+
+# Perform pathway differential abundance analysis (DAA) using ALDEx2 method
+# Please change group to "your_group_column" if you are not using example dataset
+daa_results_df <- pathway_daa(abundance = kegg_abundance, metadata = metadata, group = "3groups", daa_method = "LinDA", select = NULL, reference = "imm") 
+
+# Filter results for ALDEx2_Welch's t test method
+# Please check the unique(daa_results_df$method) and choose one
+daa_sub_method_results_df <- daa_results_df[daa_results_df$method == "LinDA", ]
+
+# Annotate pathway results using KO to KEGG conversion
+daa_annotated_sub_method_results_df <- pathway_annotation(pathway = "KO", daa_results_df = daa_sub_method_results_df, ko_to_kegg = TRUE)
+
+head(daa_annotated_sub_method_results_df)
+
+daa_longfiltered_df<- daa_annotated_sub_method_results_df[daa_annotated_sub_method_results_df$group1 == "long", ]
+daa_longfiltered_df<- feature_with_p_0.05[feature_with_p_0.05$group2 == "long", ]
+
+
+# Generate pathway error bar plot
+# Please change Group to metadata$your_group_column if you are not using example dataset
+p <- pathway_errorbar(abundance = kegg_abundance, daa_results_df = daa_longfiltered_df, Group = metadata$'3groups', p_values_threshold = 0.05, order = "pathway_class", select = NULL, ko_to_kegg = TRUE, p_value_bar = TRUE, colors = NULL, x_lab = "pathway_name")
+
+ggsave("picrust2_linda_3groupslongfilter.png", height=9, width=16, device="png")
+
+# Generate pathway heatmap
+# Please change column_to_rownames() to the feature column if you are not using example dataset
+# Please change group to "your_group_column" if you are not using example dataset
+feature_with_p_0.05 <- daa_annotated_sub_method_results_df %>% filter(p_adjust < 0.05)
+custom_colors <- c("skyblue", "salmon")
+kegg_abundance <- kegg_abundance %>%
+  tibble::rownames_to_column(var = "pathway")
+
+install.packages("ggh4x")
+library("ggh4x")
+
+pathway_heatmap(
+  abundance = kegg_abundance %>%
+    right_join(
+      daa_annotated_sub_method_results_df %>% select(all_of(c("feature","pathway_name"))),
+      by = c("pathway" = "feature")
+    ) %>%
+    distinct(pathway, .keep_all = TRUE) %>%
+    filter(pathway %in% feature_with_p_0.05$feature) %>%
+    select(-"pathway") %>%
+    column_to_rownames("pathway_name"),
+  metadata = metadata,
+  group = "3groups",
+  colors = custom_colors
+)
+
+#ggsave("picrust2_limmavoom_3groups_heatmap.png", height=9, width=16, device="png")
+ggsave("picrust2_linda_3groups_heatmap.png", height=9, width=16, device="png")
