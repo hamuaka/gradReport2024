@@ -1,0 +1,25 @@
+library(tidyverse)
+library(qiime2R)
+
+metadata<-read_q2metadata("sample-metadata.tsv")
+
+observed_features<-read_qza("alpha-diversity/Sample_depth_10000/core-metrics-results/observed_features_vector.qza")
+observed_features<-observed_features$data %>% rownames_to_column("SampleID") # this moves the sample names to a new column that matches the metadata and allows them to be merged
+metadata<-
+metadata %>% 
+  left_join(observed_features)
+
+preferred_order <- c("imm", "1day", "long")
+
+metadata %>%
+  filter(!is.na(observed_features)) %>%
+  mutate(`3groups` = factor(`3groups`, levels = preferred_order)) %>%
+  ggplot(aes(x = `3groups`, y = observed_features, fill = `3groups`)) +
+  geom_boxplot() +
+  stat_summary(geom = "errorbar", fun.data = mean_se, width = 0) +
+  stat_summary(geom = "line", fun.data = mean_se, aes(group = 1)) +
+  stat_summary(geom = "point", fun.data = mean_se) +
+  xlab("Groups") +
+  ylab("Observed Features Diversity") +
+  theme_q2r() +
+  ggsave("alpha-compare_observed_features.png", height = 3, width = 4, device = "png")
