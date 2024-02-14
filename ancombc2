@@ -1,0 +1,97 @@
+library(phyloseq)
+library(qiime2R)
+library(knitr)
+library(tidyverse)
+
+taxonomy<-read_qza("qzv_data/Taxonomy/taxonomy.qza")
+#see data
+head(taxonomy$data)%>%kable() 
+
+taxtable<-taxonomy$data %>% as_tibble() %>% separate(Taxon, sep=";", c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+head(taxtable)%>%kable(format ="markdown") 
+
+tree<-read_qza("rooted-tree.qza")
+
+metadata <-read.table("sample-metadata.tsv",  sep='\t', header=T,  comment="")
+head(metadata)
+
+otu_unrarefied <- read_qza("qzv_data/Table/table.qza")
+head(otu_unrarefied$data[1:5,1:5])
+physeq_unrarefied<-phyloseq(
+  otu_table(otu_unrarefied$data, taxa_are_rows = T),
+  phy_tree(tree$data),
+  tax_table(as.data.frame(taxtable) %>% select(-Confidence) %>% column_to_rownames("Feature.ID") %>% as.matrix()), 
+  sample_data(metadata %>% as.data.frame() %>% column_to_rownames("sample.id"))
+  )
+colSums(otu_table(physeq_unrarefied))
+min(colSums(otu_table(physeq_unrarefied)))
+physeq_rarefy <- rarefy_even_depth(physeq_unrarefied, sample.size = 44718)
+
+
+
+tse = mia::makeTreeSummarizedExperimentFromPhyloseq(physeq_rarefy)
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("ANCOMBC")
+library(ANCOMBC)
+
+
+tse$X3groups = factor(tse$X3groups, levels = c("imm", "1day", "long"))
+
+set.seed(123)
+# It should be noted that we have set the number of bootstrap samples (B) equal 
+# to 10 in the 'trend_control' function for computational expediency. 
+# However, it is recommended that users utilize the default value of B, 
+# which is 100, or larger values for optimal performance.
+output = ancombc2(data = tse, assay_name = "counts", tax_level = "Species",
+                  fix_formula = "X3groups",
+                  rand_formula = NULL,
+                  p_adj_method = "holm", pseudo_sens = TRUE,
+                  prv_cut = 0.10, lib_cut = 1000, s0_perc = 0.05,
+                  group = "X3groups", struc_zero = TRUE, neg_lb = TRUE,
+                  alpha = 0.05, n_cl = 2, verbose = TRUE,
+                  global = TRUE, pairwise = TRUE, dunnet = TRUE, trend = TRUE,
+                  iter_control = list(tol = 1e-2, max_iter = 20, 
+                                      verbose = TRUE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  lme_control = lme4::lmerControl(),
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                  trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE)),
+						       matrix(c(-1, 0, 1, -1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE),
+                                                       matrix(c(1, 0, 1, -1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE),
+                                       node = list(2),
+                                       solver = "ECOS",
+                                       B = 100))
+library(ANCOMBC)
+library(tidyverse)
+library(DT)
+options(DT.options = list(
+  initComplete = JS("function(settings, json) {",
+  "$(this.api().table().header()).css({'background-color':
+  '#000', 'color': '#fff'});","}")))
+
+res_prim = output$res %>%
+    mutate_if(is.numeric, function(x) round(x, 2))
+write.csv(res_prim, "ancombc_species/ancombc_prim_species.csv", row.names=FALSE)
+res_global = output$res_global %>%
+    mutate_if(is.numeric, function(x) round(x, 2))
+write.csv(res_global, "ancombc_species/ancombc_global_species.csv", row.names=FALSE)
+res_pair = output$res_pair %>%
+    mutate_if(is.numeric, function(x) round(x, 2))
+write.csv(res_pair, "ancombc_species/ancombc_pair_species.csv", row.names=FALSE)
+res_dunn = output$res_dunn %>%
+    mutate_if(is.numeric, function(x) round(x, 2))
+write.csv(res_dunn, "ancombc_species/ancombc_dunn_species.csv", row.names=FALSE)
+res_trend = output$res_trend %>%
+    mutate_if(is.numeric, function(x) round(x, 2))
+write.csv(res_trend, "ancombc_species/ancombc_trend_species.csv", row.names=FALSE)
+bias_correct_log_table = output$bias_correct_log_table
+bias_correct_log_table[is.na(bias_correct_log_table)] = 0
+write.csv(round(bias_correct_log_table, 2), "ancombc_species/ancombc_biascorrectlogtable_species.csv", row.names=FALSE)
